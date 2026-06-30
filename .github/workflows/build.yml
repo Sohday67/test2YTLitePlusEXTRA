@@ -246,8 +246,99 @@ jobs:
           mv packages/*.deb ${{ github.workspace }}/youpip.deb
       - name: Build YTUHD
         run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          import re
+
+          root = Path("YTUHD")
+          files = [root / "Tweak.xm", root / "Filter.x"]
+          missing = [str(p) for p in files if not p.exists()]
+          if missing:
+              raise SystemExit(f"YTUHD source files were not found after cloning: {missing}")
+
+          def patch_common(path: Path, filter_func: str) -> bool:
+              text = path.read_text()
+              original = text
+
+              filter_method_re = re.compile(
+                  r"-\s*\(NSArray\s*\*\)\s*filterFormats:\s*\(NSArray\s*\*\)\s*formats\s*\{\s*return\s+"
+                  + re.escape(filter_func)
+                  + r"\s*\(\s*%orig\s*\)\s*;\s*\}",
+                  re.S,
+              )
+              text = filter_method_re.sub(
+                  "- (NSArray *)filterFormats:(NSArray *)formats {\n"
+                  "    NSArray *originalFormats = %orig(formats);\n"
+                  f"    return {filter_func}(originalFormats);\n"
+                  "}",
+                  text,
+              )
+
+              selectable_re = re.compile(
+                  r"-\s*\(id\)\s*getSelectableFormatDataAndReturnError:\s*\(NSError\s*\*\*\)\s*error\s*\{\s*"
+                  r'\[self\s+setValue:@\(NO\)\s+forKey:@"_postponePreferredFormatFiltering"\];\s*'
+                  r"return\s+"
+                  + re.escape(filter_func)
+                  + r"\s*\(\s*%orig\s*\)\s*;\s*\}",
+                  re.S,
+              )
+              text = selectable_re.sub(
+                  "- (id)getSelectableFormatDataAndReturnError:(NSError **)error {\n"
+                  '    [self setValue:@(NO) forKey:@"_postponePreferredFormatFiltering"];\n'
+                  "    id originalData = %orig(error);\n"
+                  "    if ([originalData isKindOfClass:[NSArray class]]) {\n"
+                  f"        return {filter_func}(originalData);\n"
+                  "    }\n"
+                  "    return originalData;\n"
+                  "}",
+                  text,
+              )
+
+              literal_filter = f"- (NSArray *)filterFormats:(NSArray *)formats {{ return {filter_func}(%orig); }}"
+              if literal_filter in text:
+                  text = text.replace(
+                      literal_filter,
+                      "- (NSArray *)filterFormats:(NSArray *)formats {\n"
+                      "    NSArray *originalFormats = %orig(formats);\n"
+                      f"    return {filter_func}(originalFormats);\n"
+                      "}",
+                  )
+
+              literal_selectable = (
+                  f'- (id)getSelectableFormatDataAndReturnError:(NSError **)error {{ [self setValue:@(NO) forKey:@"_postponePreferredFormatFiltering"]; return {filter_func}(%orig); }}'
+              )
+              if literal_selectable in text:
+                  text = text.replace(
+                      literal_selectable,
+                      "- (id)getSelectableFormatDataAndReturnError:(NSError **)error {\n"
+                      '    [self setValue:@(NO) forKey:@"_postponePreferredFormatFiltering"];\n'
+                      "    id originalData = %orig(error);\n"
+                      "    if ([originalData isKindOfClass:[NSArray class]]) {\n"
+                      f"        return {filter_func}(originalData);\n"
+                      "    }\n"
+                      "    return originalData;\n"
+                      "}",
+                  )
+
+              unsafe = re.search(rf"{re.escape(filter_func)}\s*\(\s*%orig\s*\)", text)
+              if unsafe:
+                  context = text[max(0, unsafe.start()-120):unsafe.end()+120]
+                  raise SystemExit(f"Unsafe %orig pattern remained in {path}: {context}")
+
+              if text != original:
+                  path.write_text(text)
+                  return True
+              return False
+
+          changed_tweak = patch_common(files[0], "filteredFormats")
+          changed_filter = patch_common(files[1], "filteredAlot")
+          print(f"YTUHD patch status: Tweak.xm changed={changed_tweak}, Filter.x changed={changed_filter}")
+          print("YTUHD patch verification passed.")
+          PYCODE
+          echo "Patched YTUHD source snippets:"
+          grep -n -E "originalFormats|originalData|filteredFormats\(%orig|filteredAlot\(%orig" YTUHD/Tweak.xm YTUHD/Filter.x || true
           cd YTUHD
-          make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+          make -j1 clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless ADDITIONAL_CFLAGS="-Wno-incompatible-pointer-types -Wno-error=incompatible-pointer-types"
           mv packages/*.deb ${{ github.workspace }}/ytuhd.deb
 
       - name: Build Return-YouTube-Dislikes

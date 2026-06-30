@@ -1,4 +1,5 @@
 # YTLitePlusEXTRA
+> Build note: the GitHub Actions workflows patch current upstream YouPiP and YTUHD source at build time for current Logos/clang compatibility before packaging the tweaks.
 This is a fork repo from YTLite but adds more tweaks similar to YTLitePlus for those who can't build IPA or The app is unusable.
 If you have any problems, feel free to open issues!
 
