@@ -119,6 +119,32 @@ jobs:
 
       - name: Clone YouPiP
         run: git clone --quiet --depth=1 https://github.com/PoomSmart/YouPiP.git
+
+      - name: Patch YouPiP for current Logos
+        run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+
+          legacy = Path("YouPiP/LegacyPiPCompat.x")
+          text = legacy.read_text()
+          replacements = {
+              "return initPlayerPiPControllerIfNeeded(%orig, delegate, nil);": "YTPlayerPIPController *originalController = %orig;\n    return initPlayerPiPControllerIfNeeded(originalController, delegate, nil);",
+              "return initPlayerPiPControllerIfNeeded(%orig, delegate, parentResponder);": "YTPlayerPIPController *originalController = %orig;\n    return initPlayerPiPControllerIfNeeded(originalController, delegate, parentResponder);",
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f"YouPiP LegacyPiPCompat.x patch target not found: {old}")
+              text = text.replace(old, new)
+          legacy.write_text(text)
+
+          settings = Path("YouPiP/Settings.x")
+          text = settings.read_text()
+          old = "NSMutableArray *mutableCategories = %orig.mutableCopy;"
+          new = "NSArray *originalCategories = %orig;\n    NSMutableArray *mutableCategories = originalCategories.mutableCopy;"
+          if old not in text:
+              raise SystemExit(f"YouPiP Settings.x patch target not found: {old}")
+          settings.write_text(text.replace(old, new))
+          PYCODE
     
       - name: Clone YTUHD
         run: git clone --quiet --depth=1 https://github.com/Tonwalter888/YTUHD.git
@@ -134,7 +160,8 @@ jobs:
           
       - name: Clone YouHideIsland
         run: |
-          if ! git clone --quiet --depth=1 https://github.com/middsave/YouHideIsland.git YouHideIsland; then
+          if ! GIT_TERMINAL_PROMPT=0 git clone --quiet --depth=1 https://github.com/middsave/YouHideIsland.git YouHideIsland 2>/dev/null; then
+            echo "middsave/YouHideIsland was unavailable; using Sohday67/YouHideIsland fallback."
             rm -rf YouHideIsland
             git clone --quiet --depth=1 https://github.com/Sohday67/YouHideIsland.git YouHideIsland
           fi
