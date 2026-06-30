@@ -276,7 +276,7 @@ jobs:
               text = selectable_re.sub(
                   "- (id)getSelectableFormatDataAndReturnError:(NSError **)error {\n"
                   '    [self setValue:@(NO) forKey:@"_postponePreferredFormatFiltering"];\n'
-                  "    id originalData = %orig(error);\n"
+                  "    id originalData = %orig;\n"
                   "    if ([originalData isKindOfClass:[NSArray class]]) {\n"
                   f"        return {filter_func}(originalData);\n"
                   "    }\n"
@@ -303,7 +303,7 @@ jobs:
                       literal_selectable,
                       "- (id)getSelectableFormatDataAndReturnError:(NSError **)error {\n"
                       '    [self setValue:@(NO) forKey:@"_postponePreferredFormatFiltering"];\n'
-                      "    id originalData = %orig(error);\n"
+                      "    id originalData = %orig;\n"
                       "    if ([originalData isKindOfClass:[NSArray class]]) {\n"
                       f"        return {filter_func}(originalData);\n"
                       "    }\n"
