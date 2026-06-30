@@ -111,32 +111,7 @@ jobs:
       - name: Clone YouPiP
         run: git clone --quiet --depth=1 https://github.com/PoomSmart/YouPiP.git
 
-      - name: Patch YouPiP for current Logos
-        run: |
-          python3 - <<'PYCODE'
-          from pathlib import Path
 
-          legacy = Path("YouPiP/LegacyPiPCompat.x")
-          text = legacy.read_text()
-          replacements = {
-              "return initPlayerPiPControllerIfNeeded(%orig, delegate, nil);": "YTPlayerPIPController *originalController = %orig;\n    return initPlayerPiPControllerIfNeeded(originalController, delegate, nil);",
-              "return initPlayerPiPControllerIfNeeded(%orig, delegate, parentResponder);": "YTPlayerPIPController *originalController = %orig;\n    return initPlayerPiPControllerIfNeeded(originalController, delegate, parentResponder);",
-          }
-          for old, new in replacements.items():
-              if old not in text:
-                  raise SystemExit(f"YouPiP LegacyPiPCompat.x patch target not found: {old}")
-              text = text.replace(old, new)
-          legacy.write_text(text)
-
-          settings = Path("YouPiP/Settings.x")
-          text = settings.read_text()
-          old = "NSMutableArray *mutableCategories = %orig.mutableCopy;"
-          new = "NSArray *originalCategories = %orig;\n    NSMutableArray *mutableCategories = originalCategories.mutableCopy;"
-          if old not in text:
-              raise SystemExit(f"YouPiP Settings.x patch target not found: {old}")
-          settings.write_text(text.replace(old, new))
-          PYCODE
-    
       - name: Clone YTUHD
         run: git clone --quiet --depth=1 https://github.com/Tonwalter888/YTUHD.git
            
@@ -150,12 +125,7 @@ jobs:
         run: git clone --quiet --depth=1 https://github.com/PoomSmart/YTVideoOverlay.git
           
       - name: Clone YouHideIsland
-        run: |
-          if ! GIT_TERMINAL_PROMPT=0 git clone --quiet --depth=1 https://github.com/middsave/YouHideIsland.git YouHideIsland 2>/dev/null; then
-            echo "middsave/YouHideIsland was unavailable; using Sohday67/YouHideIsland fallback."
-            rm -rf YouHideIsland
-            git clone --quiet --depth=1 https://github.com/Sohday67/YouHideIsland.git YouHideIsland
-          fi
+        run: git clone --quiet --depth=1 https://github.com/Sohday67/YouHideIsland.git YouHideIsland
 
       - name: Clone YTSkipSilence
         run: git clone --quiet --depth=1 https://github.com/Sohday67/test5silence.git YTSkipSilence
@@ -194,10 +164,77 @@ jobs:
 
       - name: Build YouPiP
         run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          import re
+          import sys
+
+          root = Path("YouPiP")
+          legacy = root / "LegacyPiPCompat.x"
+          settings = root / "Settings.x"
+          makefile = root / "Makefile"
+
+          if not legacy.exists() or not settings.exists():
+              raise SystemExit("YouPiP source files were not found after cloning.")
+
+          print("Patching YouPiP source for current Logos/clang compatibility...")
+
+          legacy_text = legacy.read_text()
+          before_legacy = legacy_text
+
+          legacy_patterns = [
+              (
+                  r"return\s+initPlayerPiPControllerIfNeeded\(\s*%orig\s*,\s*delegate\s*,\s*nil\s*\);",
+                  "YTPlayerPIPController *originalController = %orig;\n    return initPlayerPiPControllerIfNeeded(originalController, delegate, nil);",
+              ),
+              (
+                  r"return\s+initPlayerPiPControllerIfNeeded\(\s*%orig\s*,\s*delegate\s*,\s*parentResponder\s*\);",
+                  "YTPlayerPIPController *originalController = %orig;\n    return initPlayerPiPControllerIfNeeded(originalController, delegate, parentResponder);",
+              ),
+          ]
+
+          for pattern, replacement in legacy_patterns:
+              legacy_text, count = re.subn(pattern, replacement, legacy_text)
+              if count == 0 and re.search(pattern.replace("return\\s+", ""), before_legacy):
+                  raise SystemExit(f"Unable to patch YouPiP LegacyPiPCompat.x pattern: {pattern}")
+
+          if re.search(r"initPlayerPiPControllerIfNeeded\(\s*%orig", legacy_text):
+              raise SystemExit("YouPiP LegacyPiPCompat.x still contains an unsafe %orig call inside initPlayerPiPControllerIfNeeded().")
+
+          if legacy_text != before_legacy:
+              legacy.write_text(legacy_text)
+              print("Patched LegacyPiPCompat.x unsafe %orig wrapper calls.")
+          else:
+              print("LegacyPiPCompat.x was already patched or upstream changed safely.")
+
+          settings_text = settings.read_text()
+          before_settings = settings_text
+          settings_text, count = re.subn(
+              r"NSMutableArray\s*\*\s*mutableCategories\s*=\s*%orig\.mutableCopy\s*;",
+              "NSArray *originalCategories = %orig;\n    NSMutableArray *mutableCategories = originalCategories.mutableCopy;",
+              settings_text,
+          )
+          if count == 0 and "%orig.mutableCopy" in before_settings:
+              raise SystemExit("Unable to patch YouPiP Settings.x %orig.mutableCopy assignment.")
+
+          if settings_text != before_settings:
+              settings.write_text(settings_text)
+              print("Patched Settings.x NSArray -> NSMutableArray conversion.")
+          else:
+              print("Settings.x was already patched or upstream changed safely.")
+
+          if makefile.exists():
+              make_text = makefile.read_text()
+              flag_line = "$(TWEAK_NAME)_CFLAGS += -Wno-incompatible-pointer-types"
+              if flag_line not in make_text:
+                  makefile.write_text(make_text.rstrip() + "\n" + flag_line + "\n")
+                  print("Added fallback clang flag for YouPiP pointer-type warnings.")
+
+          print("YouPiP patch verification complete.")
+          PYCODE
           cd YouPiP
           make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
-          mv packages/*.deb ${{ github.workspace }}/youpip.deb    
-
+          mv packages/*.deb ${{ github.workspace }}/youpip.deb
       - name: Build YTUHD
         run: |
           cd YTUHD
@@ -295,6 +332,11 @@ jobs:
           cd YTVideoErrorAlert
           make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
           mv packages/*.deb ${{ github.workspace }}/ytvideoerror.deb
+
+      - name: List Built Tweaks
+        run: |
+          echo "Built tweak packages:"
+          ls -1 *.deb
 
       - name: Inject Tweaks Into IPA
         run: |
